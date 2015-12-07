@@ -83,6 +83,11 @@ enum Weekdays { Monday,Tuesday,Saturday };
 * If `multiplicity` is one of `0..*`, `1..*`, `*`, then collection type (`std::vector<T>` ) is used.
 * `defaultValue` property to initial value.
 
+### UMLArtifactInstance Dependency
+
+* _UMLDependency_ target `name` property is converted to '#include' in source element's generated '.h' file
+* target _UMLArtifactInstance_ `name` property is appended with '.h' in the generated '.h' file
+
 ### UMLGeneralization & UMLInterfaceRealization
 
 * converted to _Cpp Inheritance_ (` : `).

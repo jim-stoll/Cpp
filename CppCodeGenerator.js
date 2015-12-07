@@ -470,6 +470,17 @@ define(function (require, exports, module) {
         var realizations = Repository.getRelationshipsOf(elem, function (rel) {
             return (rel instanceof type.UMLInterfaceRealization || rel instanceof type.UMLGeneralization);
         });
+        var dependencies = Repository.getRelationshipsOf(elem, function (rel) {
+            return (rel instanceof type.UMLDependency);
+        });
+
+        // check for UMLArtifactInstance dependencies, generating #include statements for them as external include files
+        for (i = 0; i < dependencies.length; i++) {
+            var dep = dependencies[i];
+            if (dep.source === elem && dep.target instanceof type.UMLArtifactInstance) {
+                headerString += "#include \"" + trackingHeader(elem, dep.target) + ".h\"\n";
+            }
+        }
 
         // check for interface or class
         for (i = 0; i < realizations.length; i++) {
