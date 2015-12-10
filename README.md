@@ -15,6 +15,7 @@ This extension for StarUML(http://staruml.io) support to generate Cpp code from 
 * Default constructor is generated.
 * All contained types (_UMLClass_, _UMLInterface_, _UMLEnumeration_) are generated as inner type definition.
 * TemplateParameter to _Cpp Template_.
+* A class with the stereotype of 'noclass' will be written as a bare C-style file (both '.h' and '.cpp'), with no class declaration
 
 ### UMLAttribute
 
@@ -27,6 +28,7 @@ This extension for StarUML(http://staruml.io) support to generate Cpp code from 
 * `isLeaf` property to `final` modifier.
 * `defaultValue` property to initial value.
 * Documentation property to JavaDoc comment.
+* A 'public' `visibility` attribute with the stereotype 'extern' will be declared as 'extern', and will occur in the generated '.h' file before the class declaration
 
 ### UMLOperation
 
@@ -85,8 +87,17 @@ enum Weekdays { Monday,Tuesday,Saturday };
 
 ### UMLArtifactInstance Dependency
 
-* _UMLDependency_ target `name` property is converted to '#include' in source element's generated '.h' file
-* target _UMLArtifactInstance_ `name` property is appended with '.h' in the generated '.h' file
+* _UMLDependency_ to a _UMLArtifactInstance_ - target `name` property is converted to '#include' in source element's generated '.cpp' file.
+  * if Dependency has no stereotype, or is not stereotyped 'hinclude', the '#include' is put into the source element's '.cpp' file
+  * if Dependency is stereotyped with 'hinclude', then the '#include' is put into the source element's '.h' file
+* target _UMLArtifactInstance_ `name` property is appended with '.h' in the generated '#include'
+
+### Stereotyped UMLDependency
+
+* _UMLDependency_ target `name` property is converted to '#include' in source element's generated '.cpp' file.
+  * if Dependency has no stereotype, or is not stereotyped 'hinclude', the '#include' is put into the source elment's '.cpp' file
+  * if Dependency is stereotyped with 'hinclude', then the '#include' is put into the source element's '.h' file
+* target element's `name` property is appended with '.h' in the generated '#include'
 
 ### UMLGeneralization & UMLInterfaceRealization
 

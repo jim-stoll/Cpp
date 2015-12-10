@@ -127,7 +127,9 @@ define(function (require, exports, module) {
                 var i;
                 for (i = 0; i < items.length; i++) {
                     var item = items[i];
-                    if (item instanceof type.UMLAttribute ||  item instanceof type.UMLAssociationEnd) { // if write member variable
+                    if (item instanceof type.UMLAttribute && item.stereotype === 'define') {
+                        codeWriter.writeLine(cppCodeGen.getDefineFromStereotypedMemberVariable(item));
+                    } else if (item instanceof type.UMLAttribute ||  item instanceof type.UMLAssociationEnd) { // if write member variable
                         codeWriter.writeLine(cppCodeGen.getMemberVariable(item));
                     } else if (item instanceof type.UMLOperation) { // if write method
                         codeWriter.writeLine(cppCodeGen.getMethod(item, false));
@@ -187,6 +189,25 @@ define(function (require, exports, module) {
 
             var classfiedAttributes = cppCodeGen.classifyVisibility(allMembers);
 
+            //sorter that sorts attributes by type, putting UMLEnumerations at top, followed by UMLAttributes, then UMLOperations
+            var enumsToTopSorter =
+                function(a, b) {
+                    if (a instanceof type.UMLEnumeration) {
+                        return -1
+                    }
+
+                    if (a instanceof type.UMLAttribute && b instanceof type.UMLOperation) {
+                        return -1;
+                    }
+
+                    return 1;
+                };
+           
+
+            //reorder attributes to bubble enums up to top in each scope (in case declaring subsequent attributes or operations that rely on a declared enum)
+            classfiedAttributes._public.sort(enumsToTopSorter);
+            classfiedAttributes._protected.sort(enumsToTopSorter);
+            classfiedAttributes._private.sort(enumsToTopSorter);
 
             var finalModifier = "";
             if (elem.isFinalSpecialization === true || elem.isLeaf === true) {
@@ -197,27 +218,71 @@ define(function (require, exports, module) {
                 codeWriter.writeLine(templatePart);
             }
 
-            codeWriter.writeLine("class " + elem.name + finalModifier + writeInheritance(elem) + " {");
-            if (classfiedAttributes._public.length > 0) {
-                codeWriter.writeLine("public: ");
-                codeWriter.indent();
-                write(classfiedAttributes._public);
-                codeWriter.outdent();
-            }
-            if (classfiedAttributes._protected.length > 0) {
-                codeWriter.writeLine("protected: ");
-                codeWriter.indent();
-                write(classfiedAttributes._protected);
-                codeWriter.outdent();
-            }
-            if (classfiedAttributes._private.length > 0) {
-                codeWriter.writeLine("private: ");
-                codeWriter.indent();
-                write(classfiedAttributes._private);
-                codeWriter.outdent();
-            }
+            var writeStereotypedPreClassItems = 
+                function(stereotype) {
+                    var itemWritten = false;
 
-            codeWriter.writeLine("};");
+                    for (i = 0; i < classfiedAttributes._public.length; i++) {
+                        if (classfiedAttributes._public[i].stereotype === stereotype) {
+                            write([classfiedAttributes._public[i]]);
+                            // remove "extern" stereotyped attributes from array, so they're not written in class body, too
+                            classfiedAttributes._public.splice(i, 1);
+                            itemWritten = true;
+                        }
+                    }
+                    for (i = 0; i < classfiedAttributes._protected.length; i++) {
+                        if (classfiedAttributes._protected[i].stereotype === stereotype) {
+                            write([classfiedAttributes._protected[i]]);
+                            // remove "extern" stereotyped attributes from array, so they're not written in class body, too
+                            classfiedAttributes._protected.splice(i, 1);
+                            itemWritten = true;
+                        }
+                    }
+                    for (i = 0; i < classfiedAttributes._private.length; i++) {
+                        if (classfiedAttributes._private[i].stereotype === stereotype) {
+                            write([classfiedAttributes._private[i]]);
+                            // remove "extern" stereotyped attributes from array, so they're not written in class body, too
+                            classfiedAttributes._private.splice(i, 1);
+                            itemWritten = true;
+                        }
+                    }
+
+                    if (itemWritten === true) {
+                        codeWriter.writeLine();
+                    }
+                };
+
+            writeStereotypedPreClassItems("define");
+            writeStereotypedPreClassItems("extern");
+
+            // only write class declaration if the class is not 'noclass' stereotyped
+            if (elem.stereotype === "noclass") {
+                write(classfiedAttributes._public);
+                write(classfiedAttributes._protected);
+                write(classfiedAttributes._private);
+            } else {
+                codeWriter.writeLine("class " + elem.name + finalModifier + writeInheritance(elem) + " {");
+                if (classfiedAttributes._public.length > 0) {
+                    codeWriter.writeLine("public: ");
+                    codeWriter.indent();
+                    write(classfiedAttributes._public);
+                    codeWriter.outdent();
+                }
+                if (classfiedAttributes._protected.length > 0) {
+                    codeWriter.writeLine("protected: ");
+                    codeWriter.indent();
+                    write(classfiedAttributes._protected);
+                    codeWriter.outdent();
+                }
+                if (classfiedAttributes._private.length > 0) {
+                    codeWriter.writeLine("private: ");
+                    codeWriter.indent();
+                    write(classfiedAttributes._private);
+                    codeWriter.outdent();
+                }
+
+                codeWriter.writeLine("};");
+            }
         };
 
         var writeClassBody = function (codeWriter, elem, cppCodeGen) {
@@ -378,7 +443,68 @@ define(function (require, exports, module) {
         codeWriter.writeLine();
         codeWriter.writeLine("#include \"" +  elem.name + ".h\"");
         codeWriter.writeLine();
+
+        var dependencies = Repository.getRelationshipsOf(elem, function (rel) {
+            return (rel instanceof type.UMLDependency);
+        });
+
+        var trackingHeader = function (elem, target) {
+            var header = "";
+            var elementString = "";
+            var targetString = "";
+            var i;
+
+
+            while (elem._parent._parent !== null) {
+                elementString = (elementString.length !== 0) ?  elem.name + "/" + elementString : elem.name;
+                elem = elem._parent;
+            }
+            while (target._parent._parent !== null) {
+                targetString = (targetString.length !== 0) ?  target.name + "/" + targetString : target.name;
+                target = target._parent;
+            }
+
+            var idx;
+            for (i = 0; i < (elementString.length < targetString.length) ? elementString.length : targetString.length; i++) {
+
+                if (elementString[i] === targetString[i]) {
+                    if (elementString[i] === '/' && targetString[i] === '/') {
+                        idx = i + 1;
+                    }
+                } else {
+                    break;
+                }
+            }
+            // remove common path
+            elementString = elementString.substring(idx, elementString.length);
+            targetString = targetString.substring(idx, targetString.length);
+
+            for (i = 0; i < elementString.split('/').length - 1; i++) {
+                header += "../";
+            }
+            header += targetString;
+
+            return header;
+        };
+
+
+        var includeString = "";
+        var i;
+
+        // check for UMLArtifactInstance dependencies, generating #include statements for them as external include files
+        for (i = 0; i < dependencies.length; i++) {
+            var dep = dependencies[i];
+            if (dep.source === elem && ((dep.target instanceof type.UMLArtifactInstance && dep.stereotype !== "hinclude") || dep.stereotype === "include")) {
+                includeString += "#include \"" + trackingHeader(elem, dep.target) + ".h\"\n";
+            }
+        }
+
+        codeWriter.writeLine(includeString);
+
+        codeWriter.writeLine();
+
         funct(codeWriter, elem, this);
+
         return codeWriter.getData();
     };
 
@@ -474,10 +600,10 @@ define(function (require, exports, module) {
             return (rel instanceof type.UMLDependency);
         });
 
-        // check for UMLArtifactInstance dependencies, generating #include statements for them as external include files
+        // check for 'hinclude'-stereotyped Dependencies, generating #include statements for them in the '.h' file (by default, Dependency includes are done in the implementation .cpp file)
         for (i = 0; i < dependencies.length; i++) {
             var dep = dependencies[i];
-            if (dep.source === elem && dep.target instanceof type.UMLArtifactInstance) {
+            if (dep.source === elem && dep.stereotype === "hinclude") {
                 headerString += "#include \"" + trackingHeader(elem, dep.target) + ".h\"\n";
             }
         }
@@ -541,6 +667,26 @@ define(function (require, exports, module) {
             _protected: protected_list,
             _private: private_list
         };
+    };
+
+    /**
+     * generate #define from attributes[i] stereotyped as 'define'
+     *
+     * @param {Object} elem
+     * @return {Object} string
+     */
+    CppCodeGenerator.prototype.getDefineFromStereotypedMemberVariable = function (elem) {
+        if (elem.name.length > 0) {
+            var terms = [];
+            // doc
+            var docs = this.getDocuments(elem.documentation);
+            // #define
+            terms.push("#define");
+            // name
+            terms.push(elem.name);
+
+            return (docs + terms.join(" "));
+        }
     };
 
     /**
@@ -610,9 +756,12 @@ define(function (require, exports, module) {
                 var t_elem = elem;
                 var specifier = "";
 
-                while (t_elem._parent instanceof type.UMLClass) {
-                    specifier = t_elem._parent.name + "::" + specifier;
-                    t_elem = t_elem._parent;
+                // don't prefix method names with 'Classname::', if the class is stereotyped "noclass"
+                if (t_elem._parent.stereotype !== "noclass" ) {
+                    while (t_elem._parent instanceof type.UMLClass) {
+                        specifier = t_elem._parent.name + "::" + specifier;
+                        t_elem = t_elem._parent;
+                    }
                 }
 
                 var indentLine = "";
@@ -639,7 +788,7 @@ define(function (require, exports, module) {
                     } else if (returnType === "void") {
                         methodStr += indentLine + "return;";
                     } else {
-                        methodStr += indentLine + "return null;";
+                        methodStr += indentLine + "return NULL;";
                     }
                     docs += "\n@return " + returnType;
                 }
@@ -708,6 +857,9 @@ define(function (require, exports, module) {
     CppCodeGenerator.prototype.getModifiers = function (elem) {
         var modifiers = [];
 
+        if (elem.stereotype === "extern") {
+            modifiers.push("extern");
+        }
         if (elem.isStatic === true) {
             modifiers.push("static");
         }
@@ -717,6 +869,7 @@ define(function (require, exports, module) {
         if (elem.isAbstract === true) {
             modifiers.push("virtual");
         }
+
         return modifiers;
     };
 
