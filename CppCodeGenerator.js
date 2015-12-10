@@ -189,11 +189,15 @@ define(function (require, exports, module) {
 
             var classfiedAttributes = cppCodeGen.classifyVisibility(allMembers);
 
-            //sorter that sorts attributes by type, putting UMLEnumerations at top, followed by UMLAttributes, then UMLOperations
+            //sorter that sorts attributes by type, putting UMLEnumerations at top, followed by static UMLAttributes, followed by non-static UMLAttributes, then UMLOperations
             var enumsToTopSorter =
                 function(a, b) {
                     if (a instanceof type.UMLEnumeration) {
-                        return -1
+                        return -1;
+                    }
+
+                    if (a instanceof type.UMLAttribute && b instanceof type.UMLAttribute && a.isStatic === true && b.isStatic !== true) {
+                        return -1;
                     }
 
                     if (a instanceof type.UMLAttribute && b instanceof type.UMLOperation) {
@@ -218,39 +222,29 @@ define(function (require, exports, module) {
                 codeWriter.writeLine(templatePart);
             }
 
-            var writeStereotypedPreClassItems = 
-                function(stereotype) {
-                    var itemWritten = false;
+            var writeStereotypedPreClassItems = function(stereotype) {
+                var itemWritten = false;
 
-                    for (i = 0; i < classfiedAttributes._public.length; i++) {
-                        if (classfiedAttributes._public[i].stereotype === stereotype) {
-                            write([classfiedAttributes._public[i]]);
+                var writeScopedItems = function(scopedItems) {
+                    for (i = 0; i < scopedItems.length; i++) {
+                        if (scopedItems[i].stereotype === stereotype) {
+                            write([scopedItems[i]]);
                             // remove "extern" stereotyped attributes from array, so they're not written in class body, too
-                            classfiedAttributes._public.splice(i, 1);
-                            itemWritten = true;
-                        }
-                    }
-                    for (i = 0; i < classfiedAttributes._protected.length; i++) {
-                        if (classfiedAttributes._protected[i].stereotype === stereotype) {
-                            write([classfiedAttributes._protected[i]]);
-                            // remove "extern" stereotyped attributes from array, so they're not written in class body, too
-                            classfiedAttributes._protected.splice(i, 1);
-                            itemWritten = true;
-                        }
-                    }
-                    for (i = 0; i < classfiedAttributes._private.length; i++) {
-                        if (classfiedAttributes._private[i].stereotype === stereotype) {
-                            write([classfiedAttributes._private[i]]);
-                            // remove "extern" stereotyped attributes from array, so they're not written in class body, too
-                            classfiedAttributes._private.splice(i, 1);
+                            scopedItems.splice(i, 1);
                             itemWritten = true;
                         }
                     }
 
-                    if (itemWritten === true) {
-                        codeWriter.writeLine();
-                    }
                 };
+
+                writeScopedItems(classfiedAttributes._public);
+                writeScopedItems(classfiedAttributes._protected);
+                writeScopedItems(classfiedAttributes._private);
+
+                if (itemWritten === true) {
+                    codeWriter.writeLine();
+                }
+            };
 
             writeStereotypedPreClassItems("define");
             writeStereotypedPreClassItems("extern");
@@ -318,6 +312,30 @@ define(function (require, exports, module) {
                 }
             };
 
+            var writeClassAttributes = function(elemList) {
+                var _writeClassAttributes = function(_elemList) {
+                    for (i = 0; i < _elemList.length; i++) {
+                        item = _elemList[i];
+                        if (item instanceof type.UMLAttribute) {
+                            codeWriter.writeLine(cppCodeGen.getMemberVariable(item, false));
+                        }
+                    }
+                };
+
+                //sorter that sorts attributes by their isStatic property
+                var staticssToTopSorter = function(a, b) {
+                    if (a.isStatic) {
+                        return -1
+                    }
+
+                    return 1;
+                };
+
+                _writeClassAttributes(elemList._public.sort(staticssToTopSorter));
+                _writeClassAttributes(elemList._protected.sort(staticssToTopSorter));
+                _writeClassAttributes(elemList._private.sort(staticssToTopSorter));
+            };
+
             // parsing class
             var methodList = cppCodeGen.classifyVisibility(elem.operations.slice(0));
             var docs = elem.name + " implementation\n\n";
@@ -325,6 +343,8 @@ define(function (require, exports, module) {
                 docs += elem.documentation;
             }
             codeWriter.writeLine(cppCodeGen.getDocuments(docs));
+
+            writeClassAttributes(cppCodeGen.classifyVisibility(elem.attributes.slice(0)));
             writeClassMethod(methodList);
 
             // parsing nested class
@@ -695,25 +715,69 @@ define(function (require, exports, module) {
      * @param {Object} elem
      * @return {Object} string
      */
-    CppCodeGenerator.prototype.getMemberVariable = function (elem) {
-        if (elem.name.length > 0) {
+    CppCodeGenerator.prototype.getMemberVariable = function (elem, isHeader) {
+        //default isHeader to true;
+        isHeader = typeof isHeader != 'undefined' ? isHeader : true;
+
+        //if the element has a name, and [its not a combination of being stereotyped 'define' and being in the body - as we don't generally want #defines in the body
+        // logic here is: NOT (define AND body) = NOT (define AND NOT header) = NOT define OR header
+        if (elem.name.length > 0 && (elem.stereotype !== 'define' || isHeader === true)) {
             var terms = [];
-            // doc
-            var docs = this.getDocuments(elem.documentation);
+            var docs = "";
+            // will want to comment out non-static definitions in the body, but want to show them, as a reminder they need to be defined in a constructor
+            var bodyCommentOut = "";
+
+            //show attribute docs in the header
+            if (isHeader === true) {
+                // doc
+                docs = this.getDocuments(elem.documentation);
+            }
+
             // modifiers
             var _modifiers = this.getModifiers(elem);
+
             if (_modifiers.length > 0) {
-                terms.push(_modifiers.join(" "));
+                //remove 'static' and 'extern' modifiers if writing to body
+                if (isHeader === false) {
+                    var i;
+                    for (i=0; i < _modifiers.length; i++) {
+                        if (_modifiers[i] === "static" || _modifiers[i] === "extern") {
+                            _modifiers.splice(i, 1);
+                        }
+                    }
+                }
+
+                //if removed the only modifier(s), then push a space to the terms
+                if (_modifiers.length > 0) {
+                    terms.push(_modifiers.join(" "));
+                }
             }
+
             // type
             terms.push(this.getType(elem));
-            // name
-            terms.push(elem.name);
-            // initial value
-            if (elem.defaultValue && elem.defaultValue.length > 0) {
-                terms.push("= " + elem.defaultValue);
+
+            //name
+            //prefix static atributes with Class name in body (unless parent is not actually a Class)
+            if (elem.isStatic === true && elem._parent.stereotype !== "noclass" && isHeader === false) {
+                terms.push(elem._parent.name + "::" + elem.name);
+            } else {
+                terms.push(elem.name);
             }
-            return (docs + terms.join(" ") + ";");
+
+            // initial value - don't generate in header
+            // (primitive types can be initilized in the header, but for the sake of simplicity/consistency, just making declarations in header)
+            if (isHeader === false) {
+                if (elem.defaultValue && elem.defaultValue.length > 0) {
+                    terms.push("= " + elem.defaultValue);
+                }
+            }
+
+            //if this is a non-static attribute in the body, comment it out, but show it as a reminder that it needs to be defined
+            if (!elem.isStatic && isHeader === false) {
+                bodyCommentOut = "//";
+            }
+
+            return (docs + bodyCommentOut + terms.join(" ") + ";");
         }
     };
 
