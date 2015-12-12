@@ -254,6 +254,15 @@ define(function (require, exports, module) {
                 write(classfiedAttributes._public);
                 write(classfiedAttributes._protected);
                 write(classfiedAttributes._private);
+            //if class is stereotyped as 'struct', then generate code for a structure
+            } else if (elem.stereotype === "struct") {
+                codeWriter.writeLine("typedef struct " + elem.name + " {");
+                codeWriter.indent();
+                write(classfiedAttributes._public);
+                write(classfiedAttributes._protected);
+                write(classfiedAttributes._private);
+                codeWriter.outdent();
+                codeWriter.writeLine("} " + elem.name + ";");
             } else {
                 codeWriter.writeLine("class " + elem.name + finalModifier + writeInheritance(elem) + " {");
                 if (classfiedAttributes._public.length > 0) {
@@ -338,11 +347,12 @@ define(function (require, exports, module) {
 
             // parsing class
             var methodList = cppCodeGen.classifyVisibility(elem.operations.slice(0));
-            var docs = elem.name + " implementation\n\n";
-            if(_.isString(elem.documentation)) {
-                docs += elem.documentation;
+            //don't generate struct docs in body, as no struct info is generated in body
+            if(_.isString(elem.documentation) && !elem.stereotype == 'struct') {
+                var docs = elem.name + " implementation\n\n";
+                    docs += elem.documentation;
+                codeWriter.writeLine(cppCodeGen.getDocuments(docs));
             }
-            codeWriter.writeLine(cppCodeGen.getDocuments(docs));
 
             writeClassAttributes(cppCodeGen.classifyVisibility(elem.attributes.slice(0)));
             writeClassMethod(methodList);
@@ -351,7 +361,8 @@ define(function (require, exports, module) {
             var innerClass = [];
             for (i = 0; i < elem.ownedElements.length; i++) {
                 var element = elem.ownedElements[i];
-                if (element instanceof type.UMLClass) {
+                //don't render nested class in class body if it's stereotyped 'struct' (struct will be rendered in class header)
+                if (element instanceof type.UMLClass && elem.stereotype !== "struct") {
                     innerClass.push(element);
                 }
             }
@@ -720,8 +731,9 @@ define(function (require, exports, module) {
         isHeader = typeof isHeader != 'undefined' ? isHeader : true;
 
         //if the element has a name, and [its not a combination of being stereotyped 'define' and being in the body - as we don't generally want #defines in the body
+        // and its not an attribute of a struct, and in the class body (no struct info generated in class body)
         // logic here is: NOT (define AND body) = NOT (define AND NOT header) = NOT define OR header
-        if (elem.name.length > 0 && (elem.stereotype !== 'define' || isHeader === true)) {
+        if (elem.name.length > 0 && (elem.stereotype !== 'define' || isHeader === true) && (elem._parent.stereotype !== 'struct' || isHeader === true)) {
             var terms = [];
             var docs = "";
             // will want to comment out non-static definitions in the body, but want to show them, as a reminder they need to be defined in a constructor
