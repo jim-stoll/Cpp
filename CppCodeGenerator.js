@@ -826,11 +826,15 @@ define(function (require, exports, module) {
                 docs += "\n@param " + inputParam.name;
             }
 
-            methodStr += ((returnTypeParam.length > 0) ? this.getType(returnTypeParam[0]) : "void") + " ";
+            //small leap of faith here, but assume that any function defined in a class, with the name of the class, is a constructor, so don't generate a return type
+            if (elem.name !== elem._parent.name) {
+                methodStr += ((returnTypeParam.length > 0) ? this.getType(returnTypeParam[0]) : "void") + " ";
+            }
 
             if (isCppBody) {
                 var t_elem = elem;
                 var specifier = "";
+                var specification = "";
 
                 // don't prefix method names with 'Classname::', if the class is stereotyped "noclass"
                 if (t_elem._parent.stereotype !== "noclass" ) {
@@ -848,7 +852,13 @@ define(function (require, exports, module) {
 
                 methodStr += specifier;
                 methodStr += elem.name;
-                methodStr += "(" + inputParamStrings.join(", ") + ")" + " {\n";
+
+                //if this is a constructor (method name same as class name), then treat items in 'specification' field as initialization list
+                if (elem.name === elem._parent.name) {
+                    specification = " " + elem.specification;
+                }
+
+                methodStr += "(" + inputParamStrings.join(", ") + ")" + specification + " {\n";
                 if (returnTypeParam.length > 0) {
                     var returnType = this.getType(returnTypeParam[0]);
                     if (returnType === "boolean" || returnType === "bool") {
